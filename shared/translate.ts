@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { GhIssue } from "./github";
+import { GhIssue, GhComment } from "./github";
 
 const maxIssueDescriptionLength = 65000;
 
@@ -237,87 +237,66 @@ function validLabel(l): boolean {
     return true;
 }
 
-function getLabel(l): string {
-    switch (l) {
-        case "backwards-incompatible":
-            return "backward-incompatible"
-        case "aws-sdk-v1":
-        case "aws-sdk-v2":
-        case "sqs":
-            return "aws"
-        case "benchmarking-py":
-            return "benchmark"
-        case "build":
-            return "build-system"
-        case "cdap-io-sprint-1":
-        case "cdap-io-sprint-2":
-        case "cdap-io-sprint-3":
-        case "cdap-io-sprint-4":
-            return "cdap-io"
-        case "dataflow-runner-v2":
-        case "google-cloud-dataflow":
-        case "google-dataflow":
-            return "dataflow"
-        case "document":
-        case "documentaion":
-            return "documentation"
-        case "feature-request":
-        case "features":
-            return "new feature"
-        case "flake":
-        case "flaky-test":
-        case "flakey":
-        case "currently-failing":
-            return "flaky"
-        case "gcp-quota":
-            return "gcp"
-        case "gsoc2017":
-        case "gsoc2018":
-        case "gsoc2019":
-        case "gsoc2020":
-        case "gsoc2021":
-        case "gsoc2022":
-            return "gsoc"
-        case "gsod2019":
-        case "gsod2022":
-            return "gsod"
-        case "infra":
-            return "infrastructure"
-        case "jdbc_connector":
-            return "jdbcio"
-        case "kafkaio":
-            return "kafka"
-        case "easy":
-        case "easyfix":
-        case "beginner":
-        case "newbie":
-        case "starter":
-        case "starer":
-            return "good first issue"
-        case "pubsubio":
-        case "pubsubliteio":
-            return "pubsub"
-        case "sql-engine":
-            return "sql"
-        case "stale-assigned":
-            return "stale"
-        case "test-fail":
-        case "test-failure":
-            return "test-failures"
-        case "test-framework":
-        case "test-patch":
-        case "test-stability":
-        case "test":
-        case "testlabel":
-        case "tests":
-            return "testing"
-        case "website-revamp-2020":
-            return "website"
-    }
-    return l
+const labelMapping: Record<string, string> = {
+    "backwards-incompatible": "backward-incompatible",
+    "aws-sdk-v1": "aws",
+    "aws-sdk-v2": "aws",
+    "sqs": "aws",
+    "benchmarking-py": "benchmark",
+    "build": "build-system",
+    "cdap-io-sprint-1": "cdap-io",
+    "cdap-io-sprint-2": "cdap-io",
+    "cdap-io-sprint-3": "cdap-io",
+    "cdap-io-sprint-4": "cdap-io",
+    "dataflow-runner-v2": "dataflow",
+    "google-cloud-dataflow": "dataflow",
+    "google-dataflow": "dataflow",
+    "document": "documentation",
+    "documentaion": "documentation",
+    "feature-request": "new feature",
+    "features": "new feature",
+    "flake": "flaky",
+    "flaky-test": "flaky",
+    "flakey": "flaky",
+    "currently-failing": "flaky",
+    "gcp-quota": "gcp",
+    "gsoc2017": "gsoc",
+    "gsoc2018": "gsoc",
+    "gsoc2019": "gsoc",
+    "gsoc2020": "gsoc",
+    "gsoc2021": "gsoc",
+    "gsoc2022": "gsoc",
+    "gsod2019": "gsod",
+    "gsod2022": "gsod",
+    "infra": "infrastructure",
+    "jdbc_connector": "jdbcio",
+    "kafkaio": "kafka",
+    "easy": "good first issue",
+    "easyfix": "good first issue",
+    "beginner": "good first issue",
+    "newbie": "good first issue",
+    "starter": "good first issue",
+    "starer": "good first issue",
+    "pubsubio": "pubsub",
+    "pubsubliteio": "pubsub",
+    "sql-engine": "sql",
+    "stale-assigned": "stale",
+    "test-fail": "test-failures",
+    "test-failure": "test-failures",
+    "test-framework": "testing",
+    "test-patch": "testing",
+    "test-stability": "testing",
+    "test": "testing",
+    "testlabel": "testing",
+    "tests": "testing",
+    "website-revamp-2020": "website"
+};
+
+function getLabel(l: string): string {
+    return labelMapping[l] || l;
 }
 
-function jiraToGhIssue(jira: any): GhIssue {
+function jiraToGhIssue(jira: any, jiraServer: string): GhIssue {
     let issue = new GhIssue();
     issue.Title = jira['Summary'];
 
@@ -330,16 +309,31 @@ function jiraToGhIssue(jira: any): GhIssue {
         if (validLabel(jira[`Label${i}`])) {
             issue.Labels.add(getLabel(jira[`Label${i}`].toLowerCase()));
         }
+        if (validLabel(jira[`Fix Version${i}`])) {
+            issue.Labels.add(getLabel(jira[`Label${i}`].toLowerCase()));
+        }
     }
     if (jira['Status'] === 'Triage Needed') {
         issue.Labels.add('awaiting triage');
+    } else if (validLabel(jira['Status'])) {
+        issue.Labels.add(getLabel(jira['Status'].toLowerCase()));
     }
 
     issue.Description = formatDescription(jira['Description']);
-    issue.Description += `\n\nImported from Jira [${jira['Issue key']}](https://issues.apache.org/jira/browse/${jira['Issue key']}). Original Jira may contain additional context.`;
+    issue.Description += `\n\nImported from Jira [${jira['Issue key']}](${jiraServer}/browse/${jira['Issue key']}). Original Jira may contain additional context.`;
     issue.Description += `\nReported by: ${jira['Reporter']}.`;
     if (jira['Inward issue link (Cloners)']) {
         issue.Description += "\nThis issue has child subcomponents which were not migrated over. See the original Jira for more information.";
+    }
+
+    for (let i = 0; i < 10; i++) {
+        if (validLabel(jira[`Comment${i}`])) {
+            let parts = limitedSplit(jira[`Comment${i}`], ";", 3);
+            issue.Comments.push(new GhComment(parts[0], parts[1], formatDescription(parts[2])));
+        }
+        if (validLabel(jira[`Attachment${i}`])) {
+            issue.Atachments.push(jira[`Attachment${i}`]);
+        }
     }
 
     issue.Assignee = mapAssigneeToHandle(jira['Assignee']);
@@ -350,176 +344,118 @@ function jiraToGhIssue(jira: any): GhIssue {
     return issue;
 }
 
-export function jirasToGitHubIssues(jiras: any[]): GhIssue[] {
+export function jirasToGitHubIssues(jiras: any[], jiraServer: string): GhIssue[] {
     const filteredJiras = jiras.filter(j => j["Issue Type"] != "Sub-task").filter(j => j['Summary'].indexOf("Beam Dependency Update Request:") < 0);
     const subTasks = jiras.filter(j => j["Issue Type"] == "Sub-task");
     let issues: GhIssue[] = [];
     for (const jira of filteredJiras) {
-        let issue = jiraToGhIssue(jira);
-        issue.Children = subTasks.filter(t => t['Parent id'] == jira['Issue id']).map(t => jiraToGhIssue(t));
+        let issue = jiraToGhIssue(jira, jiraServer);
+        issue.Children = subTasks.filter(t => t['Parent id'] == jira['Issue id']).map(t => jiraToGhIssue(t, jiraServer));
         issues.push(issue);
     }
 
     return issues
 }
+const assigneeToHandleMapping: Record<string, string> = {
+    "Matt": "matt-bushell",
+    "jose": "jalberto-tgs",
+/*
+    // BEAM Project users
+    "heejong": "ihji",
+    "reuvenlax": "reuvenlax",
+    "chamikara": "chamikaramj",
+    "lostluck": "lostluck",
+    "kileys": "kileys",
+    "egalpin": "egalpin",
+    "dpcollins-google": "dpcollins-google ",
+    "johnjcasey": "johnjcasey",
+    "emilymye": "emilymye",
+    "mosche": "mosche",
+    "danoliveira": "youngoli",
+    "bhulette": "theneuralbit",
+    "arunpandianp": "arunpandianp",
+    "deepix": "deepix",
+    "Krasavinigor": "Krasavinigor",
+    "pabloem": "pabloem",
+    "damccorm": "damccorm",
+    "msbukal": "msbukal",
+    "fbeevikm": "fbeevikm",
+    "yeandy": "yeandy",
+    "jbonofre": "jbonofre",
+    "damondouglas": "damondouglas",
+    "jrmccluskey": "jrmccluskey",
+    "pcoet": "pcoet",
+    "sfc-gh-kbregula": "sfc-gh-kbregula",
+    "dmitryor": "dmitryor",
+    "nielm": "nielm",
+    "suztomo": "suztomo",
+    "kerrydc": "kerrydc",
+    "ibzib": "ibzib",
+    "SteveNiemitz": "SteveNiemitz",
+    "riteshghorse": "riteshghorse",
+    "robertwb": "robertwb",
+    "apilloud": "apilloud",
+    "denisecase": "denisecase",
+    "andreykus": "andreykus",
+    "lcwik": "lukecwik",
+    "aromanenko": "aromanenko-dev",
+    "tvalentyn": "tvalentyn",
+    "clandry94": "clandry94",
+    "andreigurau": "andreigurau",
+    "laraschmidt": "laraschmidt",
+    "pawel.pasterz": "pawelpasterz",
+    "yoshiki.obata": "lazylynx",
+    "thiscensustaker": "fernando-wizeline",
+    "danimartin": "dannymartinm",
+    "cguillaume": "guillaumecle",
+    "Mike Hernandez": "roger-mike",
+    "masahito": "masahitojp",
+    "yardeni": "TamirYardeni",
+    "bulat.safiullin": "bullet03",
+    "rarokni@gmail.com": "rezarokni",
+    "EliasSegundo": "elink21",
+    "andoni.guzman": "andoni-guzman",
+    "ningk": "KevinGG",
+    "R3tto": "Amar3tto",
+    "svetak": "svetakvsundhar",
+    "yihu": "Abacn",
+    "duliu": "liu-du",
+    "Ryan.Thompson": "ryanthompson591",
+    "Anand Inguva": "AnandInguva",
+    "Alexander Zhuravlev": "miamihotline",
+    "janl": "je-ik",
+    "Ekaterina Tatanova": "ktttnv",
+    "dchen": "dxichen",
+    "thiagotnunes": "thiagotnunes",
+    "ahmedabu": "ahmedabu98",
+    "bingyeli": "libingye816",
+    "marroble": "MarcoRob",
+    "elizaveta.lomteva": "Lizzfox"
+*/
+};
 
 function mapAssigneeToHandle(assignee: string): string {
-    switch (assignee) {
-        case "heejong":
-            return "ihji";
-        case "reuvenlax":
-            return "reuvenlax";
-        case "chamikara":
-            return "chamikaramj";
-        case "lostluck":
-            return "lostluck";
-        case "kileys":
-            return "kileys";
-        case "egalpin":
-            return "egalpin";
-        case "dpcollins-google":
-            return "dpcollins-google ";
-        case "johnjcasey":
-            return "johnjcasey";
-        case "emilymye":
-            return "emilymye";
-        case "mosche":
-            return "mosche";
-        case "danoliveira":
-            return "youngoli";
-        case "bhulette":
-            return "theneuralbit";
-        case "arunpandianp":
-            return "arunpandianp";
-        case "deepix":
-            return "deepix";
-        case "Krasavinigor":
-            return "Krasavinigor";
-        case "pabloem":
-            return "pabloem";
-        case "damccorm":
-            return "damccorm";
-        case "msbukal":
-            return "msbukal";
-        case "fbeevikm":
-            return "fbeevikm";
-        case "yeandy":
-            return "yeandy";
-        case "jbonofre":
-            return "jbonofre";
-        case "damondouglas":
-            return "damondouglas";
-        case "jrmccluskey":
-            return "jrmccluskey";
-        case "pcoet":
-            return "pcoet";
-        case "sfc-gh-kbregula":
-            return "sfc-gh-kbregula";
-        case "dmitryor":
-            return "dmitryor";
-        case "nielm":
-            return "nielm";
-        case "suztomo":
-            return "suztomo";
-        case "kerrydc":
-            return "kerrydc";
-        case "ibzib":
-            return "ibzib";
-        case "SteveNiemitz":
-            return "SteveNiemitz";
-        case "riteshghorse":
-            return "riteshghorse";
-        case "robertwb":
-            return "robertwb";
-        case "apilloud":
-            return "apilloud";
-        case "denisecase":
-            return "denisecase";
-        case "andreykus":
-            return "andreykus";
-        case "lcwik":
-            return "lukecwik";
-        case "aromanenko":
-            return "aromanenko-dev";
-        case "tvalentyn":
-            return "tvalentyn";
-        case "clandry94":
-            return "clandry94";
-        case "andreigurau":
-            return "andreigurau";
-        case "laraschmidt":
-            return "laraschmidt";
-        case "pawel.pasterz":
-            return "pawelpasterz";
-        case "yoshiki.obata":
-            return "lazylynx";
-        case "thiscensustaker":
-            return "fernando-wizeline";
-        case "danimartin":
-            return "dannymartinm";
-        case "cguillaume":
-            return "guillaumecle";
-        case "Mike Hernandez":
-            return "roger-mike";
-        case "masahito":
-            return "masahitojp";
-        case "yardeni":
-            return "TamirYardeni";
-        case "bulat.safiullin":
-            return "bullet03";
-        case "rarokni@gmail.com":
-            return "rezarokni";
-        case "EliasSegundo":
-            return "elink21";
-        case "andoni.guzman":
-            return "andoni-guzman";
-        case "ningk":
-            return "KevinGG";
-        case "R3tto":
-            return "Amar3tto";
-        case "svetak":
-            return "svetakvsundhar";
-        case "yihu":
-            return "Abacn";
-        case "duliu":
-            return "liu-du";
-        case "Ryan.Thompson":
-            return "ryanthompson591";
-        case "Anand Inguva":
-            return "AnandInguva";
-        case "Alexander Zhuravlev":
-            return "miamihotline";
-        case "janl":
-            return "je-ik";
-        case "Ekaterina Tatanova":
-            return "ktttnv";
-        case "dchen":
-            return "dxichen";
-        case "thiagotnunes":
-            return "thiagotnunes";
-        case "ahmedabu":
-            return "ahmedabu98";
-        case "bingyeli":
-            return "libingye816";
-        case "marroble":
-            return "MarcoRob";
-        case "elizaveta.lomteva":
-            return "Lizzfox";
-    }
-
-    return "";
+    return assigneeToHandleMapping[assignee] || "";
 }
-
-
 
 function isAssignable(assignee: string, jiraUsername: string): boolean {
     const assignable = [
+        "matt-bushell", "jalberto-tgs",
+/*
+        // BEAM users
         "ihji", "reuvenlax", "chamikara", "lostluck", "kileys", "egalpin",
         "emilymye", "mosche", "danoliveira", "bhulette", "pabloem", "damccorm",
         "jbonofre", "damondouglas", "suztomo", "ibzib", "robertwb", "apilloud",
         "lukecwik", "aromanenko-dev", "tvalentyn", "guillaumecle", "rezarokni",
         "KevinGG", "je-ik"
+*/
     ];
     // Check gh handle and jira username in case I copied the wrong one
     return (assignable.indexOf(assignee) > -1 || assignable.indexOf(jiraUsername) > -1);
+}
+
+function limitedSplit(str: string, delimiter: string, limit: number): string[] {
+    const parts = str.split(delimiter);
+    if (parts.length <= limit) return parts; // No need to split further
+    return [...parts.slice(0, limit - 1), parts.slice(limit - 1).join(delimiter)];
 }

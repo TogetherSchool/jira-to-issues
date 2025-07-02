@@ -14,15 +14,18 @@
  * limitations under the License.
  */
 
-const { getJiras } = require("./shared/jira");
+const { getJiras, readJiras } = require("./shared/jira");
 const { jirasToGitHubIssues } = require("./shared/translate");
 const { createIssues } = require('./shared/github');
 
 async function run(githubToken: string) {
-    const jiras = await getJiras();
+    const csvFile = process.env['CSV_FILE'];
+    const jiras = !csvFile ? await getJiras() : await readJiras(csvFile);
     console.log("Translating jiras to issues");
     const issues = jirasToGitHubIssues(jiras);
     console.log(`Found ${issues.length} issues to be created, with an additional ${issues.reduce((acc, i) => i.Children.length + acc, 0)} subtasks.`);
+    console.log(JSON.stringify(issues, null, 2));
+    console.log("Creating issues");
     await createIssues(issues, githubToken);
 }
 
@@ -35,7 +38,7 @@ if (!jiraUsername) {
     throw new Error('No Jira Username provided - set the token in a JIRA_USERNAME env variable before running');
 }
 const jiraPassword = process.env['JIRA_PASSWORD'];
-if (!jiraUsername) {
+if (!jiraPassword) {
     throw new Error('No Jira Password provided - set the token in a JIRA_PASSWORD env variable before running');
 }
 

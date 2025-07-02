@@ -17,12 +17,24 @@
 const { Octokit } = require("@octokit/rest");
 const fs = require('fs');
 const fetch = require('node-fetch');
+import { jiraServer } from './jira';
 
-const owner = 'apache';
-const repo = 'beam';
+const owner = 'TogetherSchool';
+const repo = 'educe-tec';
 const stateDir = `./repo-state/${owner}/${repo}`;
 const stateFile = `${stateDir}/alreadyCreated.txt`;
 const mappingFile = `${stateDir}/mapping.txt`;
+
+export class GhComment {
+    public Body: string;
+    public User: string;
+    public CreatedAt: string;
+    constructor(date:string, user:string, body:string) {
+        this.Body = body;
+        this.User = user;
+        this.CreatedAt = date;
+    }
+}
 
 export class GhIssue {
     public Title: string;
@@ -34,6 +46,8 @@ export class GhIssue {
     public JiraReferenceId: string;
     public Children: GhIssue[];
     public Assignable: boolean;
+    public Comments: GhComment[];
+    public Atachments: string[];
     constructor() {
         this.Title = '';
         this.Labels = new Set();
@@ -44,6 +58,8 @@ export class GhIssue {
         this.JiraReferenceId = "";
         this.Children = [];
         this.Assignable = false;
+        this.Comments = [];
+        this.Atachments = [];
     }
 }
 
@@ -81,9 +97,9 @@ async function addComment(issueNumber: number, client: any, body: string, retry:
 
 async function addMapping(issueNumber, jiraReference) {
     var bodyData = `{
-    "body": "This issue has been migrated to https://github.com/apache/beam/issues/${issueNumber}"
+    "body": "This issue has been migrated to https://github.com/${owner}/${repo}/issues/${issueNumber}"
     }`;
-    await fetch(`https://issues.apache.org/jira/rest/api/2/issue/${jiraReference}/comment`, {
+    await fetch(`${jiraServer}/rest/api/2/issue/${jiraReference}/comment`, {
     method: 'POST',
     headers: {
         'Authorization': `Basic ${Buffer.from(
@@ -121,6 +137,10 @@ async function createIssue(issue: GhIssue, client: any, retry: number = 0, paren
             console.log("Trying again");
             return await createIssue(issue, client, retry+1, parent);
         } else if (resp.status < 210) {
+            for (const comment of issue.Comments) {
+                let expandedComment = `> **@${comment.User}** *(Originally posted on ${comment.CreatedAt})*\n\n${comment.Body}`;
+                await addComment(resp.data.number, client, expandedComment, 0);
+            }
             console.log(`Issue #${resp.data.number} maps to ${issue.JiraReferenceId}`);
             if (!issue.Assignable && issue.Assignee) {
                 await addComment(resp.data.number, client, `Unable to assign user @${issue.Assignee}. If able, self-assign, otherwise tag @damccorm so that he can assign you. Because of GitHub's spam prevention system, your activity is required to enable assignment in this repo.`, 0);
