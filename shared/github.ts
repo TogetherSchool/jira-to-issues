@@ -25,20 +25,42 @@ const stateDir = `./repo-state/${owner}/${repo}`;
 const stateFile = `${stateDir}/alreadyCreated.txt`;
 const mappingFile = `${stateDir}/mapping.txt`;
 
+export const repoByLabel: Record<string, string> = {
+    'BE': 'educe-tec',
+    'FE': 'educe-fe-monorepo',
+    'Fe': 'educe-fe-monorepo',
+    'iOS': 'educe-ios',
+    'Android': 'educe-android',
+    'DevOps': 'dev-ops',
+};
+
 export class GhComment {
     public Body: string;
     public User: string;
-    public CreatedAt: string;
+    public PostedAt: string;
     constructor(date:string, user:string, body:string) {
         this.Body = body;
         this.User = user;
-        this.CreatedAt = date;
+        this.PostedAt = date;
+    }
+}
+
+export class GhAttachment {
+    public Name: string;
+    public Url: string;
+    public User: string;
+    public PostedAt: string;
+    constructor(date:string, user:string, name:string, url:string) {
+        this.Name = name;
+        this.Url = url;
+        this.User = user;
+        this.PostedAt = date;
     }
 }
 
 export class GhIssue {
     public Title: string;
-    public Labels: Set<string>;
+    public Labels: string[];
     public Description: string;
     public State: string;
     public Milestone: string;
@@ -47,10 +69,11 @@ export class GhIssue {
     public Children: GhIssue[];
     public Assignable: boolean;
     public Comments: GhComment[];
-    public Atachments: string[];
+    public Attachments: GhAttachment[];
+    public Repo: string;
     constructor() {
         this.Title = '';
-        this.Labels = new Set();
+        this.Labels = [];
         this.Description = "";
         this.State = "open";
         this.Milestone = "";
@@ -59,7 +82,8 @@ export class GhIssue {
         this.Children = [];
         this.Assignable = false;
         this.Comments = [];
-        this.Atachments = [];
+        this.Attachments = [];
+        this.Repo = repo;
     }
 }
 
@@ -68,11 +92,11 @@ function sleep(seconds: number): Promise<null> {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function addComment(issueNumber: number, client: any, body: string, retry: number = 0) {
+async function addComment(issueNumber: number, issueRepo: string, client: any, body: string, retry: number = 0) {
     try {
         let resp = await client.rest.issues.createComment({
             owner: owner,
-            repo: repo,
+            repo: issueRepo,
             issue_number: issueNumber,
             body: body,
           });
@@ -81,7 +105,7 @@ async function addComment(issueNumber: number, client: any, body: string, retry:
             console.log(`Getting rate limited. Sleeping ${backoffSeconds} seconds`);
             await sleep(backoffSeconds);
             console.log("Trying again");
-            await addComment(issueNumber, client, body, retry+1);
+            await addComment(issueNumber, issueRepo, client, body, retry + 1);
         } else if (resp.status > 210) {
             throw new Error(`Failed to comment on issue with status code: ${resp.status}. Full response: ${resp}`);
         }
@@ -91,13 +115,13 @@ async function addComment(issueNumber: number, client: any, body: string, retry:
         console.log(`Sleeping ${backoffSeconds} seconds before retrying`);
         await sleep(backoffSeconds);
         console.log("Trying again");
-        await addComment(issueNumber, client, body, retry+1);
+        await addComment(issueNumber, issueRepo, client, body, retry + 1);
     }
 }
 
-async function addMapping(issueNumber, jiraReference) {
+async function addMapping(issueNumber, issueRepo: string, jiraReference) {
     var bodyData = `{
-    "body": "This issue has been migrated to https://github.com/${owner}/${repo}/issues/${issueNumber}"
+    "body": "This issue has been migrated to https://github.com/${owner}/${issueRepo}/issues/${issueNumber}"
     }`;
     await fetch(`${jiraServer}/rest/api/2/issue/${jiraReference}/comment`, {
     method: 'POST',
@@ -112,10 +136,19 @@ async function addMapping(issueNumber, jiraReference) {
     })
 }
 
-async function createIssue(issue: GhIssue, client: any, retry: number = 0, parent: number = -1): Promise<number> {
+async function createIssue(issue: GhIssue, client: any, retry: number = 0, parent: number = -1, parentRepo: string = ""): Promise<number> {
+
+    function generateIssueReferences(issueNumbers: [number, string][], parentRepo: string) {
+        return issueNumbers.map(([n,r]) => r == parentRepo ? ` #${n}` : ` ${owner}/${r}#${n}`);
+    }
+
     let description = issue.Description;
     if (parent != -1) {
-        description += `\nSubtask of issue #${parent}`;
+        if (parentRepo == issue.Repo) {
+            description += `\nSubtask of issue #${parent}`;
+        } else {
+            description += `\nSubtask of issue ${owner}/${parentRepo}#${parent}`;
+        }
     }
     let assignees: string[] = [];
     if (issue.Assignee && issue.Assignable) {
@@ -124,44 +157,45 @@ async function createIssue(issue: GhIssue, client: any, retry: number = 0, paren
     try {
         let resp = await client.rest.issues.create({
             owner: owner,
-            repo: repo,
+            repo: issue.Repo,
             assignees: assignees,
             title: issue.Title,
             body: description,
-            labels: Array.from(issue.Labels)
+            labels: issue.Labels
         });
         if (resp.status == 403) {
             const backoffSeconds= 60*(2**(retry));
             console.log(`Getting rate limited. Sleeping ${backoffSeconds} seconds`);
             await sleep(backoffSeconds);
             console.log("Trying again");
-            return await createIssue(issue, client, retry+1, parent);
+            return await createIssue(issue, client, retry+1, parent, parentRepo);
         } else if (resp.status < 210) {
             for (const comment of issue.Comments) {
-                let expandedComment = `> **@${comment.User}** *(Originally posted on ${comment.CreatedAt})*\n\n${comment.Body}`;
-                await addComment(resp.data.number, client, expandedComment, 0);
+                let expandedComment = `> **@${comment.User}** *(Originally posted on ${comment.PostedAt})*\n\n${comment.Body}`;
+                await addComment(resp.data.number, issue.Repo, client, expandedComment, 0);
             }
-            console.log(`Issue #${resp.data.number} maps to ${issue.JiraReferenceId}`);
+            console.log(`Issue ${owner}/${issue.Repo}#${resp.data.number} maps to ${issue.JiraReferenceId}`);
             if (!issue.Assignable && issue.Assignee) {
-                await addComment(resp.data.number, client, `Unable to assign user @${issue.Assignee}. If able, self-assign, otherwise tag @damccorm so that he can assign you. Because of GitHub's spam prevention system, your activity is required to enable assignment in this repo.`, 0);
+                await addComment(resp.data.number, issue.Repo, client, `Unable to assign user @${issue.Assignee}. If able, self-assign, otherwise tag @damccorm so that he can assign you. Because of GitHub's spam prevention system, your activity is required to enable assignment in this repo.`, 0);
             }
-            fs.appendFileSync(mappingFile, `${resp.data.number}: ${issue.JiraReferenceId}\n`);
+            fs.appendFileSync(mappingFile, `${owner}/${issue.Repo}#${resp.data.number}: ${issue.JiraReferenceId}\n`);
             try {
-                await addMapping(resp.data.number, issue.JiraReferenceId)
+                await addMapping(resp.data.number, issue.Repo, issue.JiraReferenceId)
             } catch {
                 try {
-                    await addMapping(resp.data.number, issue.JiraReferenceId)
+                    await addMapping(resp.data.number, issue.Repo, issue.JiraReferenceId)
                 } catch {
-                    console.log(`Failed to record migration of ${issue.JiraReferenceId} to issue number${resp.data.number}`);
+                    console.log(`Failed to record migration of ${issue.JiraReferenceId} to issue ${owner}/${issue.Repo}#${resp.data.number}`);
                     fs.appendFileSync(mappingFile, `Previous line failed to be recorded in jira\n`);
                 }
             }
-            let issueNumbers: number[] = []
+            let issueNumbers: [number, string][] = []
             for (const child of issue.Children) {
-                issueNumbers.push(await createIssue(child, client, 0, resp.data.number));
+                issueNumbers.push([await createIssue(child, client, 0, resp.data.number, issue.Repo), child.Repo]);
             }
             if (issueNumbers.length > 0) {
-                await addComment(resp.data.number, client, `The following subtask(s) are associated with this issue:${issueNumbers.map(n => ` #${n}`).join(',')}`, 0);
+                await addComment(resp.data.number, issue.Repo, client,
+                    `The following subtask(s) are associated with this issue:${generateIssueReferences(issueNumbers, issue.Repo).join(',')}`, 0);
             }
             return resp.data.number;
         } else {
@@ -173,7 +207,7 @@ async function createIssue(issue: GhIssue, client: any, retry: number = 0, paren
         console.log(`Sleeping ${backoffSeconds} seconds before retrying`);
         await sleep(backoffSeconds);
         console.log("Trying again");
-        return await createIssue(issue, client, retry+1, parent);
+        return await createIssue(issue, client, retry+1, parent, parentRepo);
     }
 }
 

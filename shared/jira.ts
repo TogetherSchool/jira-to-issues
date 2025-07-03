@@ -18,8 +18,8 @@ import * as hm from 'typed-rest-client/HttpClient';
 import {parse} from 'csv-parse/sync';
 import {readFileSync} from 'fs';
 
-export const jiraServer: string = "https://jira.instinctools.com" // "https://issues.apache.org/jira";
-export const jiraProject: string = "ES" // "BEAM";
+export const jiraServer: string = "https://jira.instinctools.com"; // "https://issues.apache.org/jira";
+export const jiraProject: string = "ES"; // "BEAM";
 
 let hc: hm.HttpClient = new hm.HttpClient(null);
 const batchSize = 90; // Size of the batch of JIRA issues we'll get at once (days between start and creation date).

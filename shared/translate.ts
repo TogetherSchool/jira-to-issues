@@ -14,9 +14,12 @@
  * limitations under the License.
  */
 
-import { GhIssue, GhComment } from "./github";
+import { GhIssue, GhComment, GhAttachment, repoByLabel } from "./github";
+import { jiraServer } from "./jira";
 
 const maxIssueDescriptionLength = 65000;
+const allLabels: Set<string> = new Set();
+const repoByLabelKeys = [...Object.keys(repoByLabel)].sort();
 
 function parseQuote(d: string): string {
     let startIndex = d.indexOf("{quote}");
@@ -203,8 +206,14 @@ function formatDescription(d: string): string {
     return d;
 }
 
+function validData(l): boolean {
+    return !(!l || l.length <= 0);
+}
+
 function validLabel(l): boolean {
     const labelExclusionList = [
+        "Jun21", "Apr21", "May21", "Jul21", "TimeLogging", "05JulyRelease", "25SeptemberRelease",
+        // BEAM labels
         "apache", "apache-beam", "beam", "beam-playground-sprint-6", 
         "bigdata", "c4", "calcite", "clarified", "classcastexception",
         "cloud", "couchbase", "datastore", "doc-cleanup", "done", "eos",
@@ -220,7 +229,12 @@ function validLabel(l): boolean {
         "sdk-consistency", "sdk-feature-parity", "security", "serialization",
         "session", "sideinput", "slf4j", "snowflake", "spring-boot", "sslexception",
         "state", "t5", "tensorflow", "tensorflow-datasets", "tfs+beam", "thrift",
-        "triggers", "update", "watermark", "windowing"]
+        "triggers", "update", "watermark", "windowing"
+    ];
+    const labelContentExclusionList = [
+        "Educe Support",
+    ];
+
     if (!l || l.length <= 0) {
         return false;
     }
@@ -232,7 +246,11 @@ function validLabel(l): boolean {
         return false;
     }
 
-    console.log('Found valid label ' + l)
+    if (labelContentExclusionList.some(e => l.indexOf(e) > -1)) {
+        return false;
+    }
+
+    // console.log('Found valid label ' + l)
 
     return true;
 }
@@ -293,46 +311,72 @@ const labelMapping: Record<string, string> = {
 };
 
 function getLabel(l: string): string {
-    return labelMapping[l] || l;
+    const label = labelMapping[l] || l;
+    console.log(`Assigning value: '${l}' as label: '${label}'`);
+    if (label.length == 0) throw new Error(`Invalid label: '${l}'`);
+    allLabels.add(label);
+    return label;
 }
 
-function jiraToGhIssue(jira: any, jiraServer: string): GhIssue {
+function jiraToGhIssue(jira: any): GhIssue {
     let issue = new GhIssue();
+    let issueLabels = new Set<string>();
     issue.Title = jira['Summary'];
 
-    issue.Labels.add(jira['Issue Type'].toLowerCase());
-    issue.Labels.add(jira['Priority'].toUpperCase());
+    issueLabels.add(jira['Issue Type'].toLowerCase());
+    issueLabels.add(jira['Priority'].toUpperCase());
     for (let i = 0; i < 10; i++) {
         if (validLabel(jira[`Component${i}`])) {
-            issue.Labels.add(getLabel(jira[`Component${i}`].toLowerCase()));
+            issueLabels.add(getLabel(jira[`Component${i}`].toLowerCase()));
         }
         if (validLabel(jira[`Label${i}`])) {
-            issue.Labels.add(getLabel(jira[`Label${i}`].toLowerCase()));
+            issueLabels.add(getLabel(jira[`Label${i}`]));
         }
         if (validLabel(jira[`Fix Version${i}`])) {
-            issue.Labels.add(getLabel(jira[`Label${i}`].toLowerCase()));
+            issueLabels.add(getLabel(jira[`Fix Version${i}`]));
         }
     }
     if (jira['Status'] === 'Triage Needed') {
-        issue.Labels.add('awaiting triage');
+        issueLabels.add('awaiting triage');
     } else if (validLabel(jira['Status'])) {
-        issue.Labels.add(getLabel(jira['Status'].toLowerCase()));
+        issueLabels.add(getLabel(jira['Status'].toLowerCase()));
+    }
+    issue.Labels = Array.from(issueLabels);
+
+    // Change the repo based on the labels.
+    for (const repoKey of repoByLabelKeys) {
+        if (issueLabels.has(repoKey)) {
+            issue.Repo = repoByLabel[repoKey];
+            console.log(`For ${repoKey} assigning repo: ${repoByLabel[repoKey]}`);
+            break;
+        }
     }
 
     issue.Description = formatDescription(jira['Description']);
     issue.Description += `\n\nImported from Jira [${jira['Issue key']}](${jiraServer}/browse/${jira['Issue key']}). Original Jira may contain additional context.`;
-    issue.Description += `\nReported by: ${jira['Reporter']}.`;
+    if (jira['Reporter']) {
+        issue.Description += `\nReported by: ${jira['Reporter']}.`;
+    }
     if (jira['Inward issue link (Cloners)']) {
         issue.Description += "\nThis issue has child subcomponents which were not migrated over. See the original Jira for more information.";
     }
 
     for (let i = 0; i < 10; i++) {
-        if (validLabel(jira[`Comment${i}`])) {
+        if (validData(jira[`Comment${i}`])) {
             let parts = limitedSplit(jira[`Comment${i}`], ";", 3);
             issue.Comments.push(new GhComment(parts[0], parts[1], formatDescription(parts[2])));
         }
-        if (validLabel(jira[`Attachment${i}`])) {
-            issue.Atachments.push(jira[`Attachment${i}`]);
+        if (validData(jira[`Attachment${i}`])) {
+            let parts = limitedSplit(jira[`Attachment${i}`], ";", 4);
+            issue.Attachments.push(new GhAttachment(parts[0], parts[1], parts[2], parts[3]));
+        }
+    }
+
+    if (issue.Attachments.length > 0) {
+        issue.Description += `\n\nAttached ${issue.Attachments.length} file(s) where not copied over:\n`;
+        for (let i = 0; i < issue.Attachments.length; i++) {
+            let att = issue.Attachments[i];
+            issue.Description += `- [${att.Name}](${att.Url}) *(By **@${att.User}** on ${att.PostedAt})*\n`;
         }
     }
 
@@ -344,16 +388,17 @@ function jiraToGhIssue(jira: any, jiraServer: string): GhIssue {
     return issue;
 }
 
-export function jirasToGitHubIssues(jiras: any[], jiraServer: string): GhIssue[] {
+export function jirasToGitHubIssues(jiras: any[]): GhIssue[] {
     const filteredJiras = jiras.filter(j => j["Issue Type"] != "Sub-task").filter(j => j['Summary'].indexOf("Beam Dependency Update Request:") < 0);
     const subTasks = jiras.filter(j => j["Issue Type"] == "Sub-task");
     let issues: GhIssue[] = [];
     for (const jira of filteredJiras) {
-        let issue = jiraToGhIssue(jira, jiraServer);
-        issue.Children = subTasks.filter(t => t['Parent id'] == jira['Issue id']).map(t => jiraToGhIssue(t, jiraServer));
+        let issue = jiraToGhIssue(jira);
+        issue.Children = subTasks.filter(t => t['Parent id'] == jira['Issue id']).map(t => jiraToGhIssue(t));
         issues.push(issue);
     }
 
+    console.log(`All the labels in use: ${JSON.stringify(Array.from(allLabels), null, 2)}`);
     return issues
 }
 const assigneeToHandleMapping: Record<string, string> = {
