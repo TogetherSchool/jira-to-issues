@@ -17,6 +17,186 @@
 import { GhIssue, GhComment, GhAttachment, repoByLabel } from "./github";
 import { jiraServer } from "./jira";
 
+/**
+ * The translation converts Jira's labels, components, and Fix-version into GitHub labels.
+ * Issue-type, Priority, and Status are also converted into labels.
+ */
+// Label candidates to be excluded by the exact match
+const labelExclusionList = [
+    "Jun21", "Apr21", "May21", "Jul21", "TimeLogging", "05JulyRelease", "25SeptemberRelease",
+    // BEAM labels
+    "apache", "apache-beam", "beam", "beam-playground-sprint-6",
+    "bigdata", "c4", "calcite", "clarified", "classcastexception",
+    "cloud", "couchbase", "datastore", "doc-cleanup", "done", "eos",
+    "error_message_improvement", "file-component", "findbugs",
+    "flinkrunner", "full-time", "gcs_task_handler", "gcs", "go",
+    "golang", "google-cloud-spanner", "grouping", "interrupts",
+    "io", "java", "javadoc", "kinesis", "kubernetes", "log4j",
+    "log-aggregation", "maven", "metrics", "mongodb", "mqtt", "mysql",
+    "node.js", "nullability", "offset", "oom", "options", "oracle",
+    "outreachy19dec", "part-time", "patch", "py-interrupts", "python",
+    "python3", "python-conversion", "python-sqltransform", "redis",
+    "requirements", "restful", "runner", "savepoints", "schema", "schema-io",
+    "sdk-consistency", "sdk-feature-parity", "security", "serialization",
+    "session", "sideinput", "slf4j", "snowflake", "spring-boot", "sslexception",
+    "state", "t5", "tensorflow", "tensorflow-datasets", "tfs+beam", "thrift",
+    "triggers", "update", "watermark", "windowing"
+];
+// Label candidates to be excluded if they contain one of these substrings
+const labelContentExclusionList = [
+    "Educe Support",
+];
+// Accepted label candidates can be mapped to a replacement value using this table.
+const labelMapping: Record<string, string> = {
+    'triage needed': 'awaiting triage',
+    "backwards-incompatible": "backward-incompatible",
+    "aws-sdk-v1": "aws",
+    "aws-sdk-v2": "aws",
+    "sqs": "aws",
+    "benchmarking-py": "benchmark",
+    "build": "build-system",
+    "cdap-io-sprint-1": "cdap-io",
+    "cdap-io-sprint-2": "cdap-io",
+    "cdap-io-sprint-3": "cdap-io",
+    "cdap-io-sprint-4": "cdap-io",
+    "dataflow-runner-v2": "dataflow",
+    "google-cloud-dataflow": "dataflow",
+    "google-dataflow": "dataflow",
+    "document": "documentation",
+    "documentaion": "documentation",
+    "feature-request": "new feature",
+    "features": "new feature",
+    "flake": "flaky",
+    "flaky-test": "flaky",
+    "flakey": "flaky",
+    "currently-failing": "flaky",
+    "gcp-quota": "gcp",
+    "gsoc2017": "gsoc",
+    "gsoc2018": "gsoc",
+    "gsoc2019": "gsoc",
+    "gsoc2020": "gsoc",
+    "gsoc2021": "gsoc",
+    "gsoc2022": "gsoc",
+    "gsod2019": "gsod",
+    "gsod2022": "gsod",
+    "infra": "infrastructure",
+    "jdbc_connector": "jdbcio",
+    "kafkaio": "kafka",
+    "easy": "good first issue",
+    "easyfix": "good first issue",
+    "beginner": "good first issue",
+    "newbie": "good first issue",
+    "starter": "good first issue",
+    "starer": "good first issue",
+    "pubsubio": "pubsub",
+    "pubsubliteio": "pubsub",
+    "sql-engine": "sql",
+    "stale-assigned": "stale",
+    "test-fail": "test-failures",
+    "test-failure": "test-failures",
+    "test-framework": "testing",
+    "test-patch": "testing",
+    "test-stability": "testing",
+    "test": "testing",
+    "testlabel": "testing",
+    "tests": "testing",
+    "website-revamp-2020": "website"
+};
+
+/**
+ * The mapping of Jira usernames into GitHub usernames.
+ */
+const assigneeToHandleMapping: Record<string, string> = {
+    "Matt": "matt-bushell",
+    "jose": "jalberto-tgs",
+    /*
+        // BEAM Project users
+        "heejong": "ihji",
+        "reuvenlax": "reuvenlax",
+        "chamikara": "chamikaramj",
+        "lostluck": "lostluck",
+        "kileys": "kileys",
+        "egalpin": "egalpin",
+        "dpcollins-google": "dpcollins-google ",
+        "johnjcasey": "johnjcasey",
+        "emilymye": "emilymye",
+        "mosche": "mosche",
+        "danoliveira": "youngoli",
+        "bhulette": "theneuralbit",
+        "arunpandianp": "arunpandianp",
+        "deepix": "deepix",
+        "Krasavinigor": "Krasavinigor",
+        "pabloem": "pabloem",
+        "damccorm": "damccorm",
+        "msbukal": "msbukal",
+        "fbeevikm": "fbeevikm",
+        "yeandy": "yeandy",
+        "jbonofre": "jbonofre",
+        "damondouglas": "damondouglas",
+        "jrmccluskey": "jrmccluskey",
+        "pcoet": "pcoet",
+        "sfc-gh-kbregula": "sfc-gh-kbregula",
+        "dmitryor": "dmitryor",
+        "nielm": "nielm",
+        "suztomo": "suztomo",
+        "kerrydc": "kerrydc",
+        "ibzib": "ibzib",
+        "SteveNiemitz": "SteveNiemitz",
+        "riteshghorse": "riteshghorse",
+        "robertwb": "robertwb",
+        "apilloud": "apilloud",
+        "denisecase": "denisecase",
+        "andreykus": "andreykus",
+        "lcwik": "lukecwik",
+        "aromanenko": "aromanenko-dev",
+        "tvalentyn": "tvalentyn",
+        "clandry94": "clandry94",
+        "andreigurau": "andreigurau",
+        "laraschmidt": "laraschmidt",
+        "pawel.pasterz": "pawelpasterz",
+        "yoshiki.obata": "lazylynx",
+        "thiscensustaker": "fernando-wizeline",
+        "danimartin": "dannymartinm",
+        "cguillaume": "guillaumecle",
+        "Mike Hernandez": "roger-mike",
+        "masahito": "masahitojp",
+        "yardeni": "TamirYardeni",
+        "bulat.safiullin": "bullet03",
+        "rarokni@gmail.com": "rezarokni",
+        "EliasSegundo": "elink21",
+        "andoni.guzman": "andoni-guzman",
+        "ningk": "KevinGG",
+        "R3tto": "Amar3tto",
+        "svetak": "svetakvsundhar",
+        "yihu": "Abacn",
+        "duliu": "liu-du",
+        "Ryan.Thompson": "ryanthompson591",
+        "Anand Inguva": "AnandInguva",
+        "Alexander Zhuravlev": "miamihotline",
+        "janl": "je-ik",
+        "Ekaterina Tatanova": "ktttnv",
+        "dchen": "dxichen",
+        "thiagotnunes": "thiagotnunes",
+        "ahmedabu": "ahmedabu98",
+        "bingyeli": "libingye816",
+        "marroble": "MarcoRob",
+        "elizaveta.lomteva": "Lizzfox"
+    */
+};
+
+// From the mapping above which users can be assigned to issues
+const assignable = [
+    "matt-bushell", "jalberto-tgs",
+    /*
+            // BEAM users
+            "ihji", "reuvenlax", "chamikara", "lostluck", "kileys", "egalpin",
+            "emilymye", "mosche", "danoliveira", "bhulette", "pabloem", "damccorm",
+            "jbonofre", "damondouglas", "suztomo", "ibzib", "robertwb", "apilloud",
+            "lukecwik", "aromanenko-dev", "tvalentyn", "guillaumecle", "rezarokni",
+            "KevinGG", "je-ik"
+    */
+];
+
 const maxIssueDescriptionLength = 65000;
 const allLabels: Set<string> = new Set();
 const repoByLabelKeys = [...Object.keys(repoByLabel)].sort();
@@ -211,29 +391,6 @@ function validData(l): boolean {
 }
 
 function validLabel(l): boolean {
-    const labelExclusionList = [
-        "Jun21", "Apr21", "May21", "Jul21", "TimeLogging", "05JulyRelease", "25SeptemberRelease",
-        // BEAM labels
-        "apache", "apache-beam", "beam", "beam-playground-sprint-6", 
-        "bigdata", "c4", "calcite", "clarified", "classcastexception",
-        "cloud", "couchbase", "datastore", "doc-cleanup", "done", "eos",
-        "error_message_improvement", "file-component", "findbugs",
-        "flinkrunner", "full-time", "gcs_task_handler", "gcs", "go",
-        "golang", "google-cloud-spanner", "grouping", "interrupts",
-        "io", "java", "javadoc", "kinesis", "kubernetes", "log4j",
-        "log-aggregation", "maven", "metrics", "mongodb", "mqtt", "mysql",
-        "node.js", "nullability", "offset", "oom", "options", "oracle",
-        "outreachy19dec", "part-time", "patch", "py-interrupts", "python",
-        "python3", "python-conversion", "python-sqltransform", "redis",
-        "requirements", "restful", "runner", "savepoints", "schema", "schema-io",
-        "sdk-consistency", "sdk-feature-parity", "security", "serialization",
-        "session", "sideinput", "slf4j", "snowflake", "spring-boot", "sslexception",
-        "state", "t5", "tensorflow", "tensorflow-datasets", "tfs+beam", "thrift",
-        "triggers", "update", "watermark", "windowing"
-    ];
-    const labelContentExclusionList = [
-        "Educe Support",
-    ];
 
     if (!l || l.length <= 0) {
         return false;
@@ -254,61 +411,6 @@ function validLabel(l): boolean {
 
     return true;
 }
-
-const labelMapping: Record<string, string> = {
-    "backwards-incompatible": "backward-incompatible",
-    "aws-sdk-v1": "aws",
-    "aws-sdk-v2": "aws",
-    "sqs": "aws",
-    "benchmarking-py": "benchmark",
-    "build": "build-system",
-    "cdap-io-sprint-1": "cdap-io",
-    "cdap-io-sprint-2": "cdap-io",
-    "cdap-io-sprint-3": "cdap-io",
-    "cdap-io-sprint-4": "cdap-io",
-    "dataflow-runner-v2": "dataflow",
-    "google-cloud-dataflow": "dataflow",
-    "google-dataflow": "dataflow",
-    "document": "documentation",
-    "documentaion": "documentation",
-    "feature-request": "new feature",
-    "features": "new feature",
-    "flake": "flaky",
-    "flaky-test": "flaky",
-    "flakey": "flaky",
-    "currently-failing": "flaky",
-    "gcp-quota": "gcp",
-    "gsoc2017": "gsoc",
-    "gsoc2018": "gsoc",
-    "gsoc2019": "gsoc",
-    "gsoc2020": "gsoc",
-    "gsoc2021": "gsoc",
-    "gsoc2022": "gsoc",
-    "gsod2019": "gsod",
-    "gsod2022": "gsod",
-    "infra": "infrastructure",
-    "jdbc_connector": "jdbcio",
-    "kafkaio": "kafka",
-    "easy": "good first issue",
-    "easyfix": "good first issue",
-    "beginner": "good first issue",
-    "newbie": "good first issue",
-    "starter": "good first issue",
-    "starer": "good first issue",
-    "pubsubio": "pubsub",
-    "pubsubliteio": "pubsub",
-    "sql-engine": "sql",
-    "stale-assigned": "stale",
-    "test-fail": "test-failures",
-    "test-failure": "test-failures",
-    "test-framework": "testing",
-    "test-patch": "testing",
-    "test-stability": "testing",
-    "test": "testing",
-    "testlabel": "testing",
-    "tests": "testing",
-    "website-revamp-2020": "website"
-};
 
 function getLabel(l: string): string {
     const label = labelMapping[l] || l;
@@ -336,9 +438,7 @@ function jiraToGhIssue(jira: any): GhIssue {
             issueLabels.add(getLabel(jira[`Fix Version${i}`]));
         }
     }
-    if (jira['Status'] === 'Triage Needed') {
-        issueLabels.add('awaiting triage');
-    } else if (validLabel(jira['Status'])) {
+    if (validLabel(jira['Status'])) {
         issueLabels.add(getLabel(jira['Status'].toLowerCase()));
     }
     issue.Labels = Array.from(issueLabels);
@@ -398,103 +498,15 @@ export function jirasToGitHubIssues(jiras: any[]): GhIssue[] {
         issues.push(issue);
     }
 
-    console.log(`All the labels in use: ${JSON.stringify(Array.from(allLabels), null, 2)}`);
+    console.log(`All the labels in use: ${JSON.stringify(Array.from(allLabels).sort(), null, 2)}`);
     return issues
 }
-const assigneeToHandleMapping: Record<string, string> = {
-    "Matt": "matt-bushell",
-    "jose": "jalberto-tgs",
-/*
-    // BEAM Project users
-    "heejong": "ihji",
-    "reuvenlax": "reuvenlax",
-    "chamikara": "chamikaramj",
-    "lostluck": "lostluck",
-    "kileys": "kileys",
-    "egalpin": "egalpin",
-    "dpcollins-google": "dpcollins-google ",
-    "johnjcasey": "johnjcasey",
-    "emilymye": "emilymye",
-    "mosche": "mosche",
-    "danoliveira": "youngoli",
-    "bhulette": "theneuralbit",
-    "arunpandianp": "arunpandianp",
-    "deepix": "deepix",
-    "Krasavinigor": "Krasavinigor",
-    "pabloem": "pabloem",
-    "damccorm": "damccorm",
-    "msbukal": "msbukal",
-    "fbeevikm": "fbeevikm",
-    "yeandy": "yeandy",
-    "jbonofre": "jbonofre",
-    "damondouglas": "damondouglas",
-    "jrmccluskey": "jrmccluskey",
-    "pcoet": "pcoet",
-    "sfc-gh-kbregula": "sfc-gh-kbregula",
-    "dmitryor": "dmitryor",
-    "nielm": "nielm",
-    "suztomo": "suztomo",
-    "kerrydc": "kerrydc",
-    "ibzib": "ibzib",
-    "SteveNiemitz": "SteveNiemitz",
-    "riteshghorse": "riteshghorse",
-    "robertwb": "robertwb",
-    "apilloud": "apilloud",
-    "denisecase": "denisecase",
-    "andreykus": "andreykus",
-    "lcwik": "lukecwik",
-    "aromanenko": "aromanenko-dev",
-    "tvalentyn": "tvalentyn",
-    "clandry94": "clandry94",
-    "andreigurau": "andreigurau",
-    "laraschmidt": "laraschmidt",
-    "pawel.pasterz": "pawelpasterz",
-    "yoshiki.obata": "lazylynx",
-    "thiscensustaker": "fernando-wizeline",
-    "danimartin": "dannymartinm",
-    "cguillaume": "guillaumecle",
-    "Mike Hernandez": "roger-mike",
-    "masahito": "masahitojp",
-    "yardeni": "TamirYardeni",
-    "bulat.safiullin": "bullet03",
-    "rarokni@gmail.com": "rezarokni",
-    "EliasSegundo": "elink21",
-    "andoni.guzman": "andoni-guzman",
-    "ningk": "KevinGG",
-    "R3tto": "Amar3tto",
-    "svetak": "svetakvsundhar",
-    "yihu": "Abacn",
-    "duliu": "liu-du",
-    "Ryan.Thompson": "ryanthompson591",
-    "Anand Inguva": "AnandInguva",
-    "Alexander Zhuravlev": "miamihotline",
-    "janl": "je-ik",
-    "Ekaterina Tatanova": "ktttnv",
-    "dchen": "dxichen",
-    "thiagotnunes": "thiagotnunes",
-    "ahmedabu": "ahmedabu98",
-    "bingyeli": "libingye816",
-    "marroble": "MarcoRob",
-    "elizaveta.lomteva": "Lizzfox"
-*/
-};
 
 function mapAssigneeToHandle(assignee: string): string {
     return assigneeToHandleMapping[assignee] || "";
 }
 
 function isAssignable(assignee: string, jiraUsername: string): boolean {
-    const assignable = [
-        "matt-bushell", "jalberto-tgs",
-/*
-        // BEAM users
-        "ihji", "reuvenlax", "chamikara", "lostluck", "kileys", "egalpin",
-        "emilymye", "mosche", "danoliveira", "bhulette", "pabloem", "damccorm",
-        "jbonofre", "damondouglas", "suztomo", "ibzib", "robertwb", "apilloud",
-        "lukecwik", "aromanenko-dev", "tvalentyn", "guillaumecle", "rezarokni",
-        "KevinGG", "je-ik"
-*/
-    ];
     // Check gh handle and jira username in case I copied the wrong one
     return (assignable.indexOf(assignee) > -1 || assignable.indexOf(jiraUsername) > -1);
 }

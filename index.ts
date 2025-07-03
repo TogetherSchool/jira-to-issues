@@ -26,6 +26,7 @@ async function run(githubToken: string) {
     console.log(`Found ${issues.length} issues to be created, with an additional ${issues.reduce((acc, i) => i.Children.length + acc, 0)} subtasks.`);
     console.log(JSON.stringify(issues, null, 2));
     console.log("Creating issues");
+    // Comment the next line when testing the transformation
     await createIssues(issues, githubToken);
 }
 
