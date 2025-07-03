@@ -49,6 +49,7 @@ const labelContentExclusionList = [
 // Accepted label candidates can be mapped to a replacement value using this table.
 const labelMapping: Record<string, string> = {
     'triage needed': 'awaiting triage',
+    'Fe': 'FE',
     "backwards-incompatible": "backward-incompatible",
     "aws-sdk-v1": "aws",
     "aws-sdk-v2": "aws",

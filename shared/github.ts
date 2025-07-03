@@ -28,7 +28,6 @@ const mappingFile = `${stateDir}/mapping.txt`;
 export const repoByLabel: Record<string, string> = {
     'BE': 'educe-tec',
     'FE': 'educe-fe-monorepo',
-    'Fe': 'educe-fe-monorepo',
     'iOS': 'educe-ios',
     'Android': 'educe-android',
     'DevOps': 'dev-ops',
